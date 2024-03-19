@@ -1,0 +1,54 @@
+from minimalist_parser.algebras.algebra import AlgebraTerm, AlgebraError
+from minimalist_parser.minimalism.prepare_packages.prepare_packages_hm import PreparePackagesHM
+
+
+class PreparePackagesBareTrees(PreparePackagesHM):
+    """
+    Prepare Packages for string algebra with bare trees as terms
+    """
+    def __init__(self, name=None, inner_algebra=None):
+        super().__init__(name, inner_algebra)
+
+    def remove_head(self, term: AlgebraTerm):
+        """
+        Finds head by looking down the left branches until we hit a leaf or a non-concat function
+        Returns the term an empty item in place of the head subterm
+        @param term: the AlgebraTerm to update
+        @return: the updated AlgebraTerm paired with the extracted head
+        """
+        if self.is_head_subterm(term):
+            # if we're at the head, return a trace if possible, otherwise an empty leaf
+            try:
+                return self.inner_algebra.trace
+            except AttributeError:
+                ret = self.inner_algebra.empty_leaf
+                assert ret is not None, f"{self.inner_algebra} has no trace"
+                return ret
+        elif len(term.children) > 1:
+            if term.parent.name == "<":
+                # the head is on the left
+                remaining_children = term.children[1:]
+                new_head = self.remove_head(term.children[0])
+                return AlgebraTerm(term.parent, [new_head] + remaining_children)
+            elif term.parent.name == ">":
+                # the head is on the right
+                remaining_children = term.children[:-1]
+                new_head = self.remove_head(term.children[1])
+                return AlgebraTerm(term.parent, remaining_children + [new_head])
+            else:
+                raise AlgebraError(f"Node {term.parent.name} is neither <, >, nor a head.")
+        else:
+            return AlgebraTerm(term.parent, [])
+
+    def get_head(self, term: AlgebraTerm):
+        """
+        Finds head by looking down the left branches until we hit something other than < or >.
+        @param term: the AlgebraTerm we want the head of.
+        @return: AlgebraTerm: the head of the input term.
+        """
+        if term.parent.name == "<":
+            return self.get_head(term.children[0])
+        elif term.parent.name == ">":
+            return self.get_head(term.children[1])
+        else:
+            return term
