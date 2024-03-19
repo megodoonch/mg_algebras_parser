@@ -6,7 +6,7 @@ local train_data_path = "data/processed/shift_reduce/toy/neural_input.txt";   //
 local validation_data_path = "data/processed/shift_reduce/toy/neural_input.txt";  //"toy_dataset/toy-train.tsv";
 # comet (default unused because API is required and we don't want those on GitHub)
 local use_comet = false;
-local comet_api_key = "H6iXlqMw5kyj7Q5H3IxP4qCuY";
+local comet_api_key = "";
 local comet_project_name = "mg-shift-reduce";
 
 {
