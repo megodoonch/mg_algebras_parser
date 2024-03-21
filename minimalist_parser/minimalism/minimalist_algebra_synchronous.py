@@ -108,6 +108,39 @@ class MinimalistAlgebraSynchronous(MinimalistAlgebra):
             s += f"\n{algebra}: {self.inner_algebras[algebra]}"
         return s
 
+    def add_default_operations(self):
+        """
+        Only if all inner algebras are HM algebras, which come with the appropriate operation names
+        @return:
+        """
+        try:
+
+            m = MinimalistFunctionSynchronous(self, self.merge1,
+                                              {a: InnerAlgebraInstructions("concat_right") for a in self.inner_algebras})
+            self.ops[m.name] = m
+            m = MinimalistFunctionSynchronous(self, self.merge1,
+                                              {a: InnerAlgebraInstructions("concat_left") for a in self.inner_algebras})
+            self.ops[m.name] = m
+            for slot in self.slots:
+                m = MinimalistFunctionSynchronous(self, self.merge2, to_slot=slot)
+                self.ops[m.name] = m
+                m = MinimalistFunctionSynchronous(self, self.move1,
+                                                  {a: InnerAlgebraInstructions("concat_right") for a in self.inner_algebras},
+                                                  from_slot=slot)
+                self.ops[m.name] = m
+                m = MinimalistFunctionSynchronous(self, self.move1,
+                                                  {a: InnerAlgebraInstructions("concat_left") for a in self.inner_algebras},
+                                                  from_slot=slot)
+                self.ops[m.name] = m
+                for to_slot in self.slots:
+                    m = MinimalistFunctionSynchronous(self, self.move2, from_slot=slot.name, to_slot=to_slot)
+                    self.ops[m.name] = m
+        except IndexError:
+            pass
+        # except AttributeError as e:
+        #     logger.warning(f"unable to make default operations, "
+        #                    f"since at least one inner algebra lacks concat_right or concat_left operation names: {e}")
+
     def _constant_maker(self, word, value=None, label=None, conj=False, algebra: Algebra = None):
         """
         default function for making constants.
@@ -194,12 +227,13 @@ class MinimalistFunctionSynchronous(AlgebraOp):
                 name += f".{index}"
             if to_slot:
                 name += f"+{to_slot.name}"
-            for alg in self.inner_ops:
-                info = self.inner_ops[alg]
-                if info.op_name is not None:
-                    name += f"+{info.op_name}"
-                if info.prepare not in [None, "simple"]:
-                    name += f"+{info.prepare}"
+            if self.inner_ops is not None:
+                for alg in self.inner_ops:
+                    info = self.inner_ops[alg]
+                    if info.op_name is not None:
+                        name += f"+{info.op_name}"
+                    if info.prepare not in [None, "simple"]:
+                        name += f"+{info.prepare}"
             if self.adjoin:
                 name += "+adjoin"
         self.name = name
