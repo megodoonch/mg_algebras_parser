@@ -2,7 +2,6 @@ from copy import copy
 
 #from .algebras.hm_interval_pair_algebra import HMIntervalPairsAlgebra
 from .algebras.string_algebra import BareTreeStringAlgebra
-from .algebras.am_algebra_untyped import am_alg
 #from minimalist_parser.algebras.algebra_objects.graphs import SGraph
 from minimalist_parser.algebras.algebra_objects.triples import Triple
 from .algebras.hm_triple_algebra import HMTripleAlgebra
@@ -12,12 +11,61 @@ from .minimalism.movers import DSMCMovers, Slot
 #from .minimalism.prepare_packages.interval_prepare_package import IntervalPairPrepare
 from .minimalism.prepare_packages.triple_prepare_package import HMTriplesPreparePackages
 from .convert_mgbank.slots import Abar, A, R, Self, E
-from minimalist_parser.algebras.algebra_objects.amr_s_graphs import AMRSGraph
-from .algebras.am_algebra_untyped import make_predicate
+from .algebras.am_algebra_untyped import AMAlgebra
 from .minimalism.minimalist_algebra_synchronous import SynchronousTerm, MinimalistAlgebraSynchronous, \
     MinimalistFunctionSynchronous, InnerAlgebraInstructions
 from .algebras.algebra import AlgebraOp
 from minimalist_parser.minimalism.prepare_packages.prepare_packages_bare_trees import PreparePackagesBareTrees
+
+
+from .algebras.algebra_objects.amr import make_amr_named_entity, make_amr_predicate
+from .algebras.algebra_objects.graphs import SGraph
+
+adjunctizer = SGraph(
+    {0, 1},
+    {1: [(0, "mod")]},
+    sources={"M": 1, "X": 0},
+    root=0
+)
+
+whistle = make_amr_predicate("whistle-01", [0])
+
+and_graph = SGraph(
+    {0, 1},
+    {
+        1: [(0, "op1")]
+    },
+    {1: "and"},
+    {"op1": 0},
+    1
+)
+
+sleep = make_amr_predicate("sleep-01", [0])
+dream = make_amr_predicate("dream-01", [0])
+
+vocabulary = {"mary": make_amr_named_entity("person", ["Mary"]),
+              "tried": make_amr_predicate("try-01", [0, 1]),
+              "like": make_amr_predicate("like-01", [0, 1]),
+              "enter": make_amr_predicate("enter-01", [0, 1]),
+              "whistle": whistle,
+              "and": and_graph,
+              "sleep": sleep,
+              "slept": sleep,
+              "dream": dream,
+              "dreamt": dream,
+              "cat": make_amr_predicate("cat", []),
+              "I": make_amr_predicate("i", []),
+              "room": make_amr_predicate("room", []),
+
+              }
+
+
+# make the algebra
+am_alg = AMAlgebra(graph_type=SGraph)
+am_alg.add_constants({name: AlgebraOp(name, vocabulary[name]) for name in vocabulary})
+
+
+
 
 
 
@@ -29,9 +77,7 @@ string_alg.add_constant_maker()
 triple_alg = HMTripleAlgebra(name="string triples")
 triple_alg.add_constant_maker()
 triple_prepare_packages = HMTriplesPreparePackages(inner_algebra=triple_alg)
-print("***************** EMPTY ********************")
-print(triple_alg.empty_leaf_operation.function)
-print("done")
+
 # addresses_alg = HMTripleAlgebra(name="address triples", component_type=list)
 
 # initialise MG and Sync MG over triples only
@@ -62,11 +108,11 @@ print("done")
 # print(tree_sync.interp(triple_alg))
 # print("DONE\n")
 # AM algebra update
-and_g = AMRSGraph({0, 1, 2}, edges={0: [(1, "op1"), (2, "op2")]}, root=0, sources={"OP1": 1, "OP2": 2},
+and_g = SGraph({0, 1, 2}, edges={0: [(1, "op1"), (2, "op2")]}, root=0, sources={"OP1": 1, "OP2": 2},
                   node_labels={0: "and"})
 and_g_op = AlgebraOp("and_s", and_g)
 
-dream_g = make_predicate(label="dream-01", arg_numbers=[0])
+dream_g = make_amr_predicate(label="dream-01", arg_numbers=[0])
 am_alg.add_constants({"and_s": and_g_op,
                       "dreamt": AlgebraOp("dreamt", dream_g)}, default=am_alg.default_constant_maker)
 
@@ -116,9 +162,7 @@ mg = MinimalistAlgebraSynchronous([string_alg, am_alg, triple_alg],
 
 # optionally, we give labels for the default constant maker to use if words aren't found in the constant dict
 # note that we look up the words using the name of the MinimalistFunction, below
-cat_functions = {
-    am_alg: InnerAlgebraInstructions('poes'),
-}
+
 
 to_functions = {am_alg: None,  # this means there's no interpretation, so we'll skip it
                 string_alg: InnerAlgebraInstructions("to_control", leaf_object="to"),
@@ -144,7 +188,7 @@ and_functions = {am_alg: InnerAlgebraInstructions("and_s")}
 
 
 # leaves
-cat = mg.make_leaf("cat", cat_functions)
+cat = mg.make_leaf("cat")
 slept = mg.make_leaf("slept")
 dreamt = mg.make_leaf("dreamt")
 tried = mg.make_leaf("tried")
@@ -315,9 +359,6 @@ tree_atb_hm = SynchronousTerm(merge_hm, [
 
 # optionally, we give labels for the default constant maker to use if words aren't found in the constant dict
 # note that we look up the words using the name of the MinimalistFunction, below
-cat_functions = {
-    am_alg: InnerAlgebraInstructions('poes'),
-}
 
 to_functions = {am_alg: None,  # this means there's no interpretation, so we'll skip it
                 string_alg: InnerAlgebraInstructions("to_control", leaf_object="to"),
@@ -343,7 +384,7 @@ and_functions = {am_alg: InnerAlgebraInstructions("and_s")}
 
 
 # leaves
-cat = mg.make_leaf("cat", cat_functions)
+cat = mg.make_leaf("cat")
 slept = mg.make_leaf("slept")
 dreamt = mg.make_leaf("dreamt")
 tried = mg.make_leaf("tried")
@@ -395,9 +436,7 @@ tree_atb = SynchronousTerm(move1,
 
 # optionally, we give labels for the default constant maker to use if words aren't found in the constant dict
 # note that we look up the words using the name of the MinimalistFunction, below
-cat_functions = {
-    am_alg: InnerAlgebraInstructions('poes'),
-}
+
 
 to_functions = {am_alg: None,  # this means there's no interpretation, so we'll skip it
                 string_alg: InnerAlgebraInstructions("to_control", leaf_object="to"),
@@ -423,7 +462,7 @@ and_functions = {am_alg: InnerAlgebraInstructions("and_s")}
 
 
 # leaves
-cat = mg.make_leaf("cat", cat_functions)
+cat = mg.make_leaf("cat")
 slept = mg.make_leaf("slept")
 dreamt = mg.make_leaf("dreamt")
 tried = mg.make_leaf("tried")

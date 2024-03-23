@@ -354,7 +354,7 @@ class MinimalistAlgebra(Algebra):
         and combining movers, respecting SpIC.
         Used within a lambda function as the function of a MG AlgebraOp for Merge 1.
         @param reverse: bool: if True, apply inner_op to (arg2, arg1).
-                                For algebras that don't necessarily keep the head on the right.
+                                For algebras that don't necessarily keep the head on the left.
         @param adjoin: bool: if True, allow adjunct's movers to be a subset
                             of the head's
         @param prepare: function from 2 inner terms to 2 inner terms, preparing the args for
@@ -472,7 +472,7 @@ class MinimalistAlgebra(Algebra):
         @param from_slot: str: name of slot to get the mover from.
         @param inner_op: AlgebraOp of inner algebra to attach mover to main term with.
         @param reverse: bool: if True, apply inner_op to (arg2, arg1).
-                        For algebras that don't necessarily keep the head on the right.
+                        For algebras that don't necessarily keep the head on the left.
         @param e: Expression: input.
         @return: Expression: output.
         """

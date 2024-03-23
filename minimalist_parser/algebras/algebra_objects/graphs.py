@@ -1,8 +1,12 @@
 import logging
 import sys
 from copy import deepcopy
+from typing import Set, Iterable
+import penman
 
-from minimalist_parser.algebras.algebra import AlgebraError
+from ..algebra import AlgebraError
+logging.basicConfig(stream=sys.stdout, level=logging.WARNING, format='%(levelname)s (%(name)s) - %(message)s')
+
 
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
@@ -55,11 +59,23 @@ class SGraph:
     """
 
     def __init__(self, nodes: set[int] = None, edges=None, node_labels=None, sources=None, root: int = None):
+        assert nodes is None or isinstance(nodes, Set), f"Nodes must be of type Set but is {type(nodes)}"
+        assert edges is None or isinstance(edges, dict), f"Edges must be of type dict but is {type(edges)}"
+        assert node_labels is None or isinstance(node_labels,
+                                                 dict), f"node_labels must be of type dict but is {type(node_labels)}"
+        assert sources is None or isinstance(sources, dict), f"sources must be of type dict but is {type(sources)}"
+        assert root is None or isinstance(nodes, Iterable) and root in nodes, f"root must be in nodes"
+
         self.nodes = set() if nodes is None else nodes
         self.edges = {} if edges is None else edges
         self.node_labels = {} if node_labels is None else node_labels
         self.sources = {} if sources is None else sources
         self.root = root
+
+        assert set(self.edges.keys()).issubset(self.nodes), f"Edges must be subset of nodes x nodes"
+        assert set(self.sources.values()).issubset(self.nodes), f"Sources must be subset of nodes"
+        assert set(self.node_labels.keys()).issubset(self.nodes), \
+            f"Node labeling refers to non-existent nodes: {set(self.node_labels.keys())} vs {self.nodes}"
 
     def get_source_for_node(self, n):
         sources = []
@@ -69,24 +85,6 @@ class SGraph:
         return sources
 
     def __str__(self):
-        # ret = ""
-        # nodes = [node for node in self.nodes if not self.is_root(node)]
-        # nodes = [self.root] + nodes
-        # for n in nodes:
-        #     label = self.get_node_label(n)
-        #     sources = self.get_source_for_node(n)
-        #     if self.root == n:
-        #         sources.append("rt")
-        #     s = ""
-        #     if label is not None:
-        #         s += label
-        #     for source in sources:
-        #         s += f"<{source}>"
-        #     ret += f"{n}/{s}\n"
-        #     if n in self.edges:
-        #         for target, label in self.edges[n]:
-        #             ret += f"\t:{label} {target}\n"
-
         return repr(self)
 
     def __repr__(self):
@@ -157,73 +155,47 @@ class SGraph:
 
     def __add__(self, other):
         """
-        Add two Sgraphs together by merging their common source
-         and otherwise renaming the nodes of other to keep them separate.
+        Adds two graphs together, keeping the root at the root of self, and merging shared sources.
+        :param other: SGraph
+        :return: SGraph
         """
-        assert type(other) == type(self), f"{self} type {type(self)}, {other} type {type(other)}"
-        new_other = deepcopy(other)
+        assert isinstance(other, type(self))
+        # copy both graphs so we don't mess with the originals
         new_self = deepcopy(self)
-        # rename all sources in other to match self
-        keep = []
-        assert type(other.sources) == dict, f"{other.sources} is not a dict"
-        logger.debug(f"changing\n {new_other}")
-        for s in self.sources:
-            if s in other.sources:
-                if self.sources[s] != other.sources[s]:
-                    try:
-                        new_other.replace_node(other.sources[s], self.sources[s])
-                    except AssertionError:
-                        new_node = max(new_self.nodes) + 1
-                        new_other.replace_node(new_other.sources[s], new_node)
-                        new_self.replace_node(self.sources[s], new_node)
-                    logger.debug(f"updated to \n{new_other}")
-                keep.append(new_self.sources[s])
+        new_other = deepcopy(other)
 
-        # if we need new node names, they can't already be in self
-        new_node = max(new_self.nodes) + 1
-        to_change = [n for n in new_other.nodes if n not in keep]
-        if len(to_change) > 0: logger.debug(f"changing\n {new_other}")
-        for n in to_change:
-            new_other.replace_node(n, new_node)
+        # rename all nodes in other
+        new_node = max(self.nodes.union(other.nodes)) + 1  # avoid all possible conflicts of node names
+        for node in other.nodes:
+            new_other.replace_node(node, new_node)
             new_node += 1
-            logger.debug(f"updated to \n{new_other}")
+        # if self and other share any sources, make them the same in other as they are in self.
+        for source in self.sources:
+            if source in other.sources:
+                new_other.replace_node(new_other.sources[source], self.sources[source])
 
-        # combine everything
-        new_nodes = new_self.nodes.union(new_other.nodes)
-        logger.debug(f"merging {new_self.edges} {new_other.edges}")
-        # combine lists of edges
-        new_edges = merge_dicts(new_self.edges, new_other.edges)
-        try:
-            new_sources = merge_dicts(new_self.sources, new_other.sources)
-        except SetError:
-            raise GraphError(f"conflicting sources {new_self.sources} and {new_other.sources}")
-        try:
-            new_node_labels = merge_dicts(new_self.node_labels,
-                                          new_other.node_labels)  # self.node_labels | other.node_labels
-        except SetError:
-            bad_labelling = ""
-            for n in new_self.node_labels:
-                if n in new_other.node_labels and new_self.node_labels[n] != new_other.node_labels[n]:
-                    bad_labelling += f"node {n}: self: {new_self.node_labels[n]}, other: {new_other.node_labels[n]}\n"
-            raise GraphError(f"conflicting node labels: {bad_labelling}")
-        return type(self)(nodes=new_nodes, edges=new_edges, node_labels=new_node_labels, sources=new_sources,
-                      root=new_self.root)
+        # update copy of self to include everything in other
+        new_self.nodes = self.nodes.union(new_other.nodes)
+        new_self.edges.update(new_other.edges)
+        new_self.sources.update(new_other.sources)
+        new_self.node_labels.update(new_other.node_labels)
+        return new_self
 
-    def forget(self, source):
+    def forget(self, source: str):
         """
         remove source (keep node)
-        @param source:
+        @param source: str
         """
         if source in self.sources:
             self.sources.pop(source)
         else:
             logger.warning(f"No {source}-source to forget")
 
-    def rename(self, old_source, new_source):
+    def rename(self, old_source: str, new_source: str):
         """
         change source
-        @param old_source:
-        @param new_source:
+        @param old_source: str: the source to change
+        @param new_source: str: the source to change to
         """
         if new_source in self.sources:
             raise GraphError(f"Can't rename {old_source} to {new_source}: {new_source} already exists")
@@ -233,14 +205,19 @@ class SGraph:
 
     def add_source(self, node, source):
         """
-        add source to node
-        @param source:
+        add source to node.
+        @param source: str: the source to assign to the node.
+        @param node: the node to be given the source.
         """
         if source in self.sources:
             raise GraphError(f"{source} is already present in the graph")
         self.sources[source] = node
 
     def to_graphviz(self):
+        """
+        Make a graphviz (dot) representation of the graph.
+        :return: str
+        """
         ret = "digraph g {\n"
         for node in self.nodes:
             ret += f"{node}"
@@ -263,16 +240,20 @@ class SGraph:
         for node in self.edges:
             for target, label in self.edges[node]:
                 ret += f"{node}->{target} [label={label}];\n"
-
         ret += "}"
         return ret
 
-    def spellout(self):
-        """
-        For MGs
-        @return:
-        """
-        return repr(self)
+    def to_penman(self):
+        triples = []
+        for source, edges in self.edges.items():
+            for target, label in edges:
+                triples.append((source, label, target))
+        for node, label in self.node_labels.items():
+            triples.append((node, ":instance", label))
+        for source, node in self.sources.items():
+            triples.append((node, ":instance", f"<{source}>"))
+        g = penman.graph.Graph(triples, top=self.root)
+        return g
 
 
     def add_op_source(self):
@@ -281,9 +262,7 @@ class SGraph:
             and the i is the next up from whatever is already there.
         @return: None, modify in place
         """
-        if not self.root_is_conjunction():
-            raise AlgebraError("Can't add conjuncts to a non-conjunction")
-        # see what opis we alraedy have
+        # see what opis we already have
         opis = []
         for target, label in self.edges[self.root]:
             i = self.ith_conjunct(label)
@@ -314,148 +293,4 @@ class SGraph:
                 return
         return
 
-    def root_is_conjunction(self):
-        """
-        In case we want to constrain this
-        @return: bool
-        """
-        return True
 
-
-
-
-def apply(source, head: SGraph, argument: SGraph):
-    """
-    implements the AM Apply operation, with no typing
-    @param source: str: the source to put the root of argument into
-    @param head: the head and functor of the operation (the one with the relevant source)
-    @param argument: the argument (the one to be added to head)
-    @return: SGraph
-    """
-    logger.debug(f"App{source}\n{head}\n {argument}\n")
-    assert isinstance(head, SGraph), f"head must be an SGraph but is a {type(head)}"
-    assert isinstance(argument, SGraph), f"argument must be an SGraph but is a {type(head)}"
-    assert source in head.sources, f"App_{source} is not possible without {source} in the head. Head: {head}"
-    # don't want to copy the whole thing just to add the source, so we add it in place and then remove it
-    argument.add_source(argument.root, source)
-    logger.debug(f"Updated argument: {argument}")
-    new_graph = head + argument
-    new_graph.forget(source)
-    argument.forget(source)
-    return new_graph
-
-
-def modify(source, head: SGraph, modifier: SGraph):
-    """
-     implements the AM Apply operation, with no typing
-     @param source: str: the source to put the root of argument into
-     @param head: the graph to have a modifier added. Will keep this one's root
-     @param modifier: the modifier to be added (functor; i.e. the one with the source)
-     @return: SGraph
-     """
-
-    # use a special temporary source name
-    tmp = "TMP"
-    assert isinstance(head, SGraph), f"head must be an SGraph but is a {type(head)}"
-    assert isinstance(modifier, SGraph), f"modifier must be an SGraph but is a {type(head)}"
-    assert tmp not in head.sources and tmp not in modifier.sources
-    assert source in modifier.sources, f"Mod_{source} is not possible without {source} in the modifier"
-
-
-    # We want to merge the root of the head and the given source of the modifier
-    # don't want to copy the whole thing just to add the source, so we add it in place and then remove it
-    head.add_source(head.root, tmp)
-    modifier.rename(source, tmp)
-
-    new_graph = head + modifier
-    new_graph.forget(tmp)
-    head.forget(source)
-    modifier.rename(tmp, source)
-    return new_graph
-
-
-if __name__ == "__main__":
-    like = SGraph(
-        {0, 1, 2},
-        {
-            1: [(0, "ARG0"), (2, "ARG1")]
-        },
-        {1: "like"},
-        {"S": 0, "O": 2},
-        1
-    )
-
-    tried = SGraph(
-        {0, 1, 2},
-        {
-            1: [(0, "ARG0"), (2, "ARG1")]
-        },
-        {1: "try"},
-        {"S": 0, "O": 2},
-        1
-    )
-
-    mary = SGraph(
-        {0, 1},
-        edges={0: [(1, "name")]},
-        node_labels={0: "person", 1: "Mary"},
-        root=0
-    )
-
-    cat = SGraph(
-        {0},
-        node_labels={0: "cat"},
-        root=0
-    )
-
-    whistling = SGraph(
-        {0, 1, 2},
-        {
-            1: [(2, "ARG0")],
-            0: [(1, "mod")]
-        },
-        {1: "whistle"},
-        {"S": 2, "M": 0},
-        1
-    )
-
-    # k = g + h
-    # print(k)
-
-    m = SGraph(
-        {0, 1, 2},
-        {1: [(2, "with"), (0, "mod")]},
-        {0: "cute", 2: "glee"},
-        sources={"M": 1},
-        root=0
-    )
-
-    # p = k + m
-    # print(p)
-    # print(h)
-
-    vocabulary = [mary, cat, tried, like]
-    for g in vocabulary:
-        print(g)
-
-    print("AppO(like, cat)")
-    like_cat = apply("O", like, cat)
-    print(like_cat)
-
-    print("AppO(tried, like_cat)")
-    tried_like_cat = apply("O", tried, like_cat)
-    print(tried_like_cat)
-
-    print("ModM(tried_like_cat, whistling)")
-    try_whistling = modify("M", tried_like_cat, whistling)
-    print(try_whistling)
-
-    print("AppS(tried_like_cat, mary)")
-    full = apply("S", try_whistling, mary)
-    print(full)
-
-    print("ModM(full, m)")
-    modified = modify("M", full, m)
-    print(modified)
-
-    print(modified.to_graphviz())
