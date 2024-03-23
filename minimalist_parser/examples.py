@@ -1,15 +1,15 @@
 from copy import copy
 
-from .algebras.hm_interval_pair_algebra import HMIntervalPairsAlgebra
+#from .algebras.hm_interval_pair_algebra import HMIntervalPairsAlgebra
 from .algebras.string_algebra import BareTreeStringAlgebra
 from .algebras.am_algebra_untyped import am_alg
-from minimalist_parser.algebras.algebra_objects.graphs import SGraph
+#from minimalist_parser.algebras.algebra_objects.graphs import SGraph
 from minimalist_parser.algebras.algebra_objects.triples import Triple
 from .algebras.hm_triple_algebra import HMTripleAlgebra
-from .convert_mgbank.mgbank2algebra import add_addresses, add_intervals
+#from .convert_mgbank.mgbank2algebra import add_addresses, add_intervals
 from .minimalism.movers import DSMCMovers, Slot
-from .minimalism.prepare_packages.addressed_triple_prepare_package import HMAddressedTriplesPreparePackages
-from .minimalism.prepare_packages.interval_prepare_package import IntervalPairPrepare
+#from .minimalism.prepare_packages.addressed_triple_prepare_package import HMAddressedTriplesPreparePackages
+#from .minimalism.prepare_packages.interval_prepare_package import IntervalPairPrepare
 from .minimalism.prepare_packages.triple_prepare_package import HMTriplesPreparePackages
 from .convert_mgbank.slots import Abar, A, R, Self, E
 from minimalist_parser.algebras.algebra_objects.amr_s_graphs import AMRSGraph
@@ -462,6 +462,8 @@ t3 = SynchronousTerm(move1,
                      )
                      ]
                      )
+
+cat_tried_sleep = t3
 
 # example_interval_algebra = HMIntervalPairsAlgebra()
 # interval_prepare = IntervalPairPrepare()

@@ -10,7 +10,23 @@ class PreparePackagesBareTrees(PreparePackagesHM):
         if inner_algebra is None:
             from minimalist_parser.algebras.string_algebra import BareTreeStringAlgebra
             inner_algebra = BareTreeStringAlgebra()
+        if name is None:
+            name = f"{inner_algebra} prepare"
         super().__init__(name, inner_algebra)
+
+    def prefix(self, functor: AlgebraTerm, argument: AlgebraTerm):
+        """
+        Prepare Package
+        Applies HM to suffix to the heads, but keeps rest separate
+        @param functor: AlgebraTerm
+        @param argument: AlgebraTerm
+        @return: AlgebraTerm pair
+        """
+        updated_argument, argument_head = self.extract_head(argument)
+        op = self.inner_algebra.get_op_by_name("prefix")
+        new_functor = self.add_affix(argument_head, functor, op)
+
+        return new_functor, updated_argument
 
     def remove_head(self, term: AlgebraTerm):
         """

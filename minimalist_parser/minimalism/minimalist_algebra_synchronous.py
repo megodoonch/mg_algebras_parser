@@ -55,6 +55,7 @@ class InnerAlgebraInstructions:
         @param reverse: For Merge1 or Move1, if True, the operands to the inner operation will be reversed.
                         Used for inner algebras that don't always keep the head on the left.
                         (Minimalist Algebras as defined here always do.)
+        @param algebra_op: if the algebra operation is given directly, we use this as the inner op, or leaf operation.
         """
         self.op_name = op_name
         self.prepare = prepare
@@ -303,6 +304,9 @@ class MinimalistFunctionSynchronous(AlgebraOp):
                 assert isinstance(prepare_name, str), "prepare should just be a name"
                 if not inner_algebra in self.minimalist_algebra.inner_algebras:
                     raise ValueError(f"{inner_algebra} not among inner algebras {self.minimalist_algebra.inner_algebras.keys()}")
+                prepare_packages = self.minimalist_algebra.inner_algebras[inner_algebra]
+                if not isinstance(prepare_packages, PreparePackages):
+                    raise TypeError(f"{prepare_packages} should be PreparePackages but is {type(prepare_packages)}")
                 prepare = getattr(self.minimalist_algebra.inner_algebras[inner_algebra], prepare_name)
             else:
                 prepare = None
@@ -367,6 +371,13 @@ class SynchronousTerm(AlgebraTerm):
 
     def evaluate(self):
         return self.interp()
+
+    def view_inner_term(self, algebra):
+        """
+        Interpret into the given algebra and visualise the inner term with NLTK.
+        """
+        expr = self.interp(algebra)
+        expr.inner_term.to_nltk_tree().draw()
 
     def interp(self, algebra=None) -> Expression:
         """
