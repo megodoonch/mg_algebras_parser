@@ -7,6 +7,9 @@ class PreparePackagesBareTrees(PreparePackagesHM):
     Prepare Packages for string algebra with bare trees as terms
     """
     def __init__(self, name=None, inner_algebra=None):
+        if inner_algebra is None:
+            from minimalist_parser.algebras.string_algebra import BareTreeStringAlgebra
+            inner_algebra = BareTreeStringAlgebra()
         super().__init__(name, inner_algebra)
 
     def remove_head(self, term: AlgebraTerm):

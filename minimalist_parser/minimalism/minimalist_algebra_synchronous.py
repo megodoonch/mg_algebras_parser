@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
 logger.setLevel(logging.INFO)
 log = logger.debug
+from ..algebras.string_algebra import BareTreeStringAlgebra
 
 
 # VERBOSE = False
@@ -44,7 +45,7 @@ log = logger.debug
 
 
 class InnerAlgebraInstructions:
-    def __init__(self, op_name: str = None, prepare: str = None, leaf_object=None, reverse=False):
+    def __init__(self, op_name: str = None, prepare: str = None, leaf_object=None, reverse=False, algebra_op=None):
         """
         Stores the necessary components for creating a MinimalistFunction for the particular inner algebra.
         @param op_name: the name of the inner op (to look it up in alg.ops or to give to alg.constant_maker.
@@ -59,6 +60,7 @@ class InnerAlgebraInstructions:
         self.prepare = prepare
         self.leaf_object = leaf_object
         self.reverse = reverse
+        self.algebra_op = algebra_op
 
     def __repr__(self):
         ret = "{"
@@ -73,6 +75,9 @@ class InnerAlgebraInstructions:
             ret += ", "
         if self.reverse:
             ret += "reversed"
+            ret += ", "
+        if self.algebra_op is not None:
+            ret += self.algebra_op.name
         return ret + "}"
 
     def __eq__(self, other):
@@ -81,6 +86,13 @@ class InnerAlgebraInstructions:
 
 
 class MinimalistAlgebraSynchronous(MinimalistAlgebra):
+    """
+    A synchronous Minimalist Algebra: i.e. this has multiple Inner Algebras for structure-building.
+    Attributes:
+        inner_algebras: dict {Algebra: PreparePackages}
+        inner_algebra: for compatability with parent class,
+            the first algebra in the input parameter inner_algebras is stored here as a default inner algebra.
+    """
     def __init__(self, inner_algebras: list[Algebra], mover_type=Movers, prepare_packages=None, slots=None):
         """
         :param inner_algebras: list of algebras forming the inner algebras of the interpretations
@@ -110,36 +122,39 @@ class MinimalistAlgebraSynchronous(MinimalistAlgebra):
 
     def add_default_operations(self):
         """
-        Only if all inner algebras are HM algebras, which come with the appropriate operation names
-        @return:
+        Only if all inner algebras are HM algebras, which come with the appropriate operation names.
+        Adds merge/move right and left, merge2/move1 for every mover slot, and move2 for every pair of mover slots.
         """
-        try:
+        if all([isinstance(a, HMAlgebra) for a in self.inner_algebras]):
 
             m = MinimalistFunctionSynchronous(self, self.merge1,
-                                              {a: InnerAlgebraInstructions("concat_right") for a in self.inner_algebras})
+                                              {a: InnerAlgebraInstructions("concat_right") for a in self.inner_algebras},
+                                              name="Merge1_right")
             self.ops[m.name] = m
             m = MinimalistFunctionSynchronous(self, self.merge1,
-                                              {a: InnerAlgebraInstructions("concat_left") for a in self.inner_algebras})
+                                              {a: InnerAlgebraInstructions("concat_left", reverse=isinstance(a, BareTreeStringAlgebra)) for a in self.inner_algebras},
+                                              name="Merge1_left")
             self.ops[m.name] = m
             for slot in self.slots:
-                m = MinimalistFunctionSynchronous(self, self.merge2, to_slot=slot)
+                m = MinimalistFunctionSynchronous(self, self.merge2, to_slot=slot, name=f"Merge2_{slot}")
                 self.ops[m.name] = m
                 m = MinimalistFunctionSynchronous(self, self.move1,
                                                   {a: InnerAlgebraInstructions("concat_right") for a in self.inner_algebras},
-                                                  from_slot=slot)
+                                                  from_slot=slot,
+                                                  name=f"Move1_right_{slot}")
                 self.ops[m.name] = m
                 m = MinimalistFunctionSynchronous(self, self.move1,
-                                                  {a: InnerAlgebraInstructions("concat_left") for a in self.inner_algebras},
-                                                  from_slot=slot)
+                                                  {a: InnerAlgebraInstructions("concat_left", reverse=isinstance(a, BareTreeStringAlgebra)) for a in self.inner_algebras},
+                                                  from_slot=slot.name,
+                                                  name=f"Move1_left_{slot}")
                 self.ops[m.name] = m
                 for to_slot in self.slots:
-                    m = MinimalistFunctionSynchronous(self, self.move2, from_slot=slot.name, to_slot=to_slot)
+                    m = MinimalistFunctionSynchronous(self, self.move2, from_slot=slot.name, to_slot=to_slot,
+                                                      name=f"Move2_{slot.name}_{to_slot}")
                     self.ops[m.name] = m
-        except IndexError:
-            pass
-        # except AttributeError as e:
-        #     logger.warning(f"unable to make default operations, "
-        #                    f"since at least one inner algebra lacks concat_right or concat_left operation names: {e}")
+        else:
+            logger.warning(f"unable to make default operations, "
+                           f"since at least one inner algebra lacks concat_right or concat_left operation names: {e}")
 
     def _constant_maker(self, word, value=None, label=None, conj=False, algebra: Algebra = None):
         """
@@ -269,12 +284,18 @@ class MinimalistFunctionSynchronous(AlgebraOp):
             logger.debug(f"{inner_algebra}: {instructions}")
             if not isinstance(instructions, InnerAlgebraInstructions):
                 logger.warning(f"should be instructions")
-            inner_name = instructions.op_name
-            if inner_name is not None:
-                inner = inner_algebra.get_op_by_name(inner_name)
-                assert inner is not None, "somehow inner is none even though we found it."
+
+            # get the inner operation
+            if instructions.algebra_op is not None:
+                # we've been given an explicit AlegraOp, so just use it.
+                inner = instructions.algebra_op
             else:
-                inner = None
+                inner_name = instructions.op_name
+                if inner_name is not None:
+                    inner = inner_algebra.get_op_by_name(inner_name)
+                    assert inner is not None, "somehow inner is none even though we found it."
+                else:
+                    inner = None
 
             # Prepare
             prepare_name = instructions.prepare
@@ -347,7 +368,7 @@ class SynchronousTerm(AlgebraTerm):
     def evaluate(self):
         return self.interp()
 
-    def interp(self, algebra=None):
+    def interp(self, algebra=None) -> Expression:
         """
         Recursively evaluate the tree,
             making it into an algebra term over a Minimalist Algebra over the given inner algebra
@@ -388,14 +409,18 @@ class SynchronousTerm(AlgebraTerm):
                 if self.parent.inner_ops[inner_algebra] is not None:
                     log("using given constant name")
                     instructions = self.parent.inner_ops[inner_algebra]
-                    inner_op_name = instructions.op_name
-                    if inner_op_name is None:
-                        log(f"{self} has no interpretation in {inner_algebra}")
-                        return
+                    if instructions.algebra_op is not None:
+                        # use the AlgebraOp we've been given
+                        inner_term = AlgebraTerm(instructions.algebra_op)
                     else:
-                        assert isinstance(inner_op_name,
-                                          str), f"Inner op name {inner_op_name} should be a string but is a {type(inner_op_name)}"
-                        inner_term = inner_algebra.make_leaf(inner_op_name, function=instructions.leaf_object)
+                        inner_op_name = instructions.op_name
+                        if inner_op_name is None:
+                            log(f"{self} has no interpretation in {inner_algebra}")
+                            return
+                        else:
+                            assert isinstance(inner_op_name,
+                                              str), f"Inner op name {inner_op_name} should be a string but is a {type(inner_op_name)}"
+                            inner_term = inner_algebra.make_leaf(inner_op_name, function=instructions.leaf_object)
                 else:
                     log(f"{self} has no interpretation in {inner_algebra}")
                     return
@@ -406,7 +431,11 @@ class SynchronousTerm(AlgebraTerm):
                 else:
                     log(f"{inner_algebra} not found in {self.parent.inner_ops}")
                 word = self.parent.name
-                inner_op = inner_algebra.constant_maker(word=word, label=self.parent.name)
+                try:
+                    inner_op = inner_algebra.constant_maker(word=word, label=self.parent.name)
+                except TypeError:
+                    inner_op = inner_algebra.constant_maker(word)
+
                 inner_term = AlgebraTerm(inner_op)
 
             # log(f"made inner leaf term which evaluates to {inner_term.evaluate()}")

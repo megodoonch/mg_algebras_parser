@@ -20,7 +20,11 @@ class HMError(Exception):
         self.message = message
 
 
-log = logging.debug
+logger = logging.getLogger(__name__)
+# logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
+
+log = logger.debug
 
 
 
@@ -31,20 +35,27 @@ class HMAlgebra(Algebra, ABC):
     Attributes:
         name: str: name for the algebra
         domain_type: Type: the type of the domain of the algebra, e.g. Triple, IntervalItem
+        ops: dict str (op name) : AlgebraOp. Optional. Default
+            {'concat_right': AlgebraOp('concat_right', self.concat_right)
+             'concat_left': AlgebraOp('concat_left', self.concat_left),
+             'suffix': AlgebraOp('suffix', self.suffix),
+             'prefix': AlgebraOp('prefix', self.prefix)
+             }
+        syntax_op_names: list of str: these operations are syntactic, as opposed to morphological,
+                                        and so for the purposes of finding the head of a term,
+                                        we stop when we find any operation not in this list.
     """
 
     def __init__(self, name, domain_type, zero=None, meta=None, ops=None, syntax_op_names=None):
         """
-        An HMAlgbra has a name and specifies the type of its inner items
+        An HMAlgebra has a name and specifies the type of its inner items
         @param name: str
-        @param domain_type: type, e.g. Tree or Triple
+        @param domain_type: type, e.g. str or Tree or PairItem
         @param zero: and AlgebraOp to use for default empty heads (optional).
+                    Default: AlgebraOp('<e>', domain_type())
         """
 
         super().__init__(name=name, domain_type=domain_type, zero=zero, meta=meta, ops=ops)
-
-        # self.empty_item = AlgebraTerm(AlgebraOp(repr(empty), empty))
-        # self.domain_type = domain_type
 
         # all Algebra operations defined here
         if ops is None:
