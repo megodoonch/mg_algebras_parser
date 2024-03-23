@@ -44,7 +44,7 @@ log = logger.debug
 
 
 class InnerAlgebraInstructions:
-    def __init__(self, op_name: str, prepare: str = None, leaf_object=None, reverse=False):
+    def __init__(self, op_name: str = None, prepare: str = None, leaf_object=None, reverse=False):
         """
         Stores the necessary components for creating a MinimalistFunction for the particular inner algebra.
         @param op_name: the name of the inner op (to look it up in alg.ops or to give to alg.constant_maker.
