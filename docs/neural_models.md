@@ -1,5 +1,99 @@
 # About all the neural stuff
 
+**WARNING**: 
+
+* recently reorganised files. There are probably some problems with imports still. 
+* Python scripts need to be run with `PYTHONPATH=./` preposed to them. Not tested yet with allennlp
+
+## Set up
+
+###  Quick start with pip:
+
+I don't know if this makes sense anymore, but I'm making a conda environment and then installing everything with pip
+
+```bash
+conda create -n env_name python=3.9.12
+conda activate env_name
+pip install -r requirements.txt
+```
+
+### Starting over with pip
+
+This is specifically with cuda toolkit version 11.3, as the new GPUs on Surfsara have `sm_86` something (architechture?) and 10 isn't compatable.
+Conda doesn't seem to allow me to install cuda toolkit on my local machine, but pip does.
+
+Check cuda version: this should get 11.3. If you get None, I think that means your torch doesn't have cuda toolkit even if you asked for it.
+
+```python
+import torch
+print(torch.version.cuda)
+```
+
+Make a new conda environment for some reason, and specify the python version.
+pip install pytorch instructions here: https://pytorch.org/get-started/locally/
+
+```bash
+conda create -n new_env_name python=3.10
+conda activate new_env_name
+pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu113
+pip install allennlp
+pip install allennlp-models
+```
+
+If you want a docker image with exactly these packages: 
+
+1. pipe pip freeze to requirements.txt 
+2. remove any weird @file.... things
+3. remove
+    ```
+    torch==1.12.1+cu113
+    torchaudio==0.12.1+cu113
+    torchvision==0.13.1+cu113
+    ```
+4. and make a new docker image
+
+
+
+### More Docker
+
+To tag the image with multiple tags or give them multiple names use multiple `-t <name>`s
+
+and to give the container your own name, e.g. `mg-parser-container`: 
+
+```bash
+docker build --progress=plain -t mg-parser:latest -t mg-parser:0.x . --no-cache
+docker run -it --name mg-parser-container mg-parser
+```
+
+To retag or rename:
+
+```bash
+docker tag oldname:oldtag newname:newtag
+```
+
+In particular, to rename so that it can be pushed to dockerhub:
+
+```bash
+docker tag mg-parser:my_tag megodoonch/mg-parser:my_tag
+docker push megodoonch/mg-parser:my_tag
+```
+
+### Other
+
+To get the requirements from a working environment:
+
+```bash
+pip list --format=freeze > requirements.txt
+```
+
+To pipe all output to a logfile and also keep it in the terminal, put this at the end of the command:
+
+```bash
+ 2>&1 | tee path_to_logfile
+```
+
+
+
 Current Surfsara url: ssh://mfowlie@145.38.188.128
 
 ## Setting up Surfsara
