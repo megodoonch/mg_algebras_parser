@@ -3,7 +3,7 @@ Module for converting MGBank trees to mg algebra terms
 
 """
 import os
-# import pickle
+import pickle
 import re
 from copy import deepcopy
 
@@ -17,10 +17,10 @@ from minimalist_parser.minimalism.prepare_packages.prepare_packages_hm import Pr
 from ..minimalism.minimalist_algebra_synchronous import MinimalistAlgebraSynchronous, MinimalistFunctionSynchronous, SynchronousTerm, InnerAlgebraInstructions
 from ..minimalism.minimalist_algebra import MinimalistAlgebra
 from ..algebras import hm_algebra, algebra
-#from ..minimalism.mg_types import MGType
+from ..minimalism.mg_types import MGType
 from ..convert_mgbank.slots import slot_name2slot, A, Abar, R, Self, E
 from ..minimalism import minimalist_algebra as mg
-#from ..trees.transducer import TransitionRule, transduce, Q
+from ..trees.transducer import TransitionRule, transduce, Q
 from ..minimalism.movers import Slot, ListMovers, DSMCMovers, DSMCAddressedMovers
 from ..algebras.hm_triple_algebra import HMTripleAlgebra
 from ..algebras.hm_interval_pair_algebra import HMIntervalPairsAlgebra

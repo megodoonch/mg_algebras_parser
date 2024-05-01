@@ -1,0 +1,17 @@
+version: '3.3'
+
+services:
+  mycontainer:
+    image: megodoonch/mg-parser
+
+    build:  # only happens if no image?
+      dockerfile: "../Dockerfile" # relative to this file
+      context: "../"
+    volumes:
+      - '~/shift-reduce:/mounted'
+      - '~/shift-reduce/scripts:/scripts'
+      - '~/data/volume_2/models/seq2seq/2023-07-22-00-47:/models'
+      - '~/data/volume_2/logfiles:/logfiles'
+      - '~/data/volume_2/predictions/official/conj_from_train/seq2seq:/predictions'
+      - '~/data/volume_2/datasets/seq2seq/official/:/inputs'
+    command: bash -c "bash /scripts/predict.sh /inputs/dev/dev.tsv seq2seq"

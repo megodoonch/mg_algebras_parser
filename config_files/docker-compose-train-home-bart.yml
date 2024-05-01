@@ -1,0 +1,19 @@
+version: '3.3'
+
+services:
+  mycontainer:
+    image: megodoonch/mg-parser
+
+    build:  # only happens if no image?
+      dockerfile: "../Dockerfile" # relative to this file
+      context: "../"
+    environment:
+      TZ: Europe/Amsterdam
+
+    volumes:
+      - '~/PycharmProjects/minimalist_parser:/app'  # where the python files live
+      - '~/PycharmProjects/minimalist_parser/scripts:/scripts'  # where the bash scripts live
+      - '~/PycharmProjects/minimalist_parser/data/processed:/data'  # where the data lives
+      - '~/PycharmProjects/minimalist_parser/data/good_models/bart/:/models' # where to put the model once it's trained
+      - '~/PycharmProjects/minimalist_parser/results/predictions/bart/training:/predictions'  # where to write the predictions
+    command: bash -c "bash /scripts/train.sh -s ${LABEL} -b -n -e 1 -f /models"

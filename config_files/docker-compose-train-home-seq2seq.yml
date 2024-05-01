@@ -1,0 +1,19 @@
+version: '3.3'
+
+services:
+  mycontainer:
+    image: megodoonch/mg-parser
+
+    build:  # only happens if no image?
+      dockerfile: "../Dockerfile" # relative to this file
+      context: "../"
+    environment:
+      TZ: Europe/Amsterdam
+
+    volumes:
+      - '~/PycharmProjects/minimalist_parser:/app'
+      - '~/PycharmProjects/minimalist_parser/scripts:/scripts'
+      - '~/PycharmProjects/minimalist_parser/data/processed:/data'
+      - '~/PycharmProjects/minimalist_parser/data/good_models/seq2seq:/models'
+      - '~/PycharmProjects/minimalist_parser/results/predictions/seq2seq/three:/predictions'
+    command: bash -c "bash /scripts/train.sh -s ${LABEL} -e 1 -f /models"

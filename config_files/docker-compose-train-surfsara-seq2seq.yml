@@ -1,0 +1,34 @@
+version: '3.3'
+
+services:
+  mycontainer:
+    image: megodoonch/mg-parser
+
+    build:  # only happens if no image?
+      dockerfile: "../Dockerfile" # relative to this file
+      context: "../"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              # that's the closest analogue to --gpus; provide
+              # an integer amount of devices or 'all'
+              count: 1
+              # Devices are reserved using a list of capabilities, making
+              # capabilities the only required field. A device MUST
+              # satisfy all the requested capabilities for a successful
+              # reservation.
+              capabilities: [ gpu ]
+
+
+    environment:
+      TZ: Europe/Amsterdam
+
+    volumes:
+      - '~/shift-reduce:/app'
+      - '~/shift-reduce/scripts:/scripts'
+      - '~/data/volume_2/datasets/:/data'
+      - '~/data/volume_2/models/seq2seq:/models'
+      - '~/data/volume_2/logfiles:/logfiles'
+    command: bash -c "bash /scripts/train.sh -s ${LABEL} -g -f /models"

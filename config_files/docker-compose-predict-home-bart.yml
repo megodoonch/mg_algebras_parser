@@ -1,0 +1,17 @@
+version: '3.3'
+
+services:
+  mycontainer:
+    image: megodoonch/mg-parser
+
+    build:  # only happens if no image?
+      dockerfile: "../Dockerfile" # relative to this file
+      context: "../"
+    volumes:
+      - '~/PycharmProjects/minimalist_parser:/mounted'
+      - '~/PycharmProjects/minimalist_parser/trained_models/models/bart:/models'
+      - '~/PycharmProjects/minimalist_parser/scripts:/scripts'
+      - '~/PycharmProjects/minimalist_parser/logfiles:/logfiles'
+      - '~/PycharmProjects/minimalist_parser/results/predictions/bart/three:/predictions'
+      - '~/PycharmProjects/minimalist_parser/data/processed/seq2seq/sampled/official:/inputs'
+    command: bash -c "bash /scripts/predict.sh /inputs/three_sentences.tsv bart"

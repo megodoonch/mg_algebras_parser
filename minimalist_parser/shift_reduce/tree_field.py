@@ -12,9 +12,11 @@ from allennlp.data import Vocabulary, Token
 from allennlp.data.fields import TextField
 from allennlp.data.fields.field import Field
 from allennlp.common.util import START_SYMBOL, END_SYMBOL
+from allennlp.data.token_indexers import SingleIdTokenIndexer
 from allennlp.data.tokenizers import PretrainedTransformerTokenizer
 
-from ..convert_mgbank.term2actions import WORD_CODE, OP_CODE, SILENT_CODE
+from minimalist_parser.convert_mgbank.term2actions import WORD_CODE, OP_CODE, SILENT_CODE
+
 
 # TODO update to match my needs
 
@@ -39,7 +41,8 @@ class TreeField(Field):
             1 means this edge can be parsed as soon as the leaves are done, 2 means we need to wait for the 1's ,etc.
     """
 
-    def __init__(self, node_list: list[str], adjacency_list: list[str], operation_or_word_or_silent: list[str]):
+    def __init__(self, node_list: list[str], adjacency_list: list[str], operation_or_word_or_silent: list[str],
+                 available_stack_nodes: list[list[int]]):
         """
         Creates a TreeField containing everything the TreeLSTM needs to know about the tree.
         Parameters are all string lists, as they were read in by the DataReader.
@@ -47,15 +50,16 @@ class TreeField(Field):
         @param adjacency_list: flat list of indices in the node_list, [parent, child, parent, child...]
         @param operation_or_word_or_silent: List of 0,1,2, according as the node in the node_list
                                             is an operation, word index, or silent head.
+        @param available_stack_nodes: List of lists of indices of entries in node_list.
         """
         # print("INIT")
         # print(am_sentence)
-        super().__init__()  #node_tokenizer, word_from_node_token_indexer, node_token_indexer,
-                         #token_index_to_selection_sequence_index, selection_sequence_index_to_token_index)
+        super().__init__()  # node_tokenizer, word_from_node_token_indexer, node_token_indexer,
+        # token_index_to_selection_sequence_index, selection_sequence_index_to_token_index)
         # self.am_sentence = am_sentence
         # self.node_linearizer = node_linearizer
         # self.tree = create_unbounce_style_tree(am_sentence, node_tokenizer, node_token_indexer,
-                                               # word_from_node_token_indexer, node_linearizer)
+        # word_from_node_token_indexer, node_linearizer)
         # print(self.tree)
         # self.flat_tree = None
 
@@ -65,7 +69,7 @@ class TreeField(Field):
         self.adjacency_list = []
         # un-flatten the adjacency list, currently just [parent child parent child...]
         for i in range(len(adjacency_list))[:-1:2]:
-            self.adjacency_list.append([int(adjacency_list[i]), int(adjacency_list[i+1])])
+            self.adjacency_list.append([int(adjacency_list[i]), int(adjacency_list[i + 1])])
 
         # unpack the nodes into their respective categories
         self.word_ids = []
@@ -73,18 +77,27 @@ class TreeField(Field):
         self.silent = []
         for category, node in zip(self.operation_or_word_or_silent, self.node_list):
             if category == OP_CODE:
-                self.operations.append(node)
+                self.operations.append(Token(text=node))
             elif category == WORD_CODE:
                 self.word_ids.append(node)
             elif category == SILENT_CODE:
-                self.silent.append(node)
+                self.silent.append(Token(text=node))
             else:
                 raise ValueError(f"category can only be 0 (operation), 1 (word), or 2 (silent), but got {category}")
 
         self.node_order, self.edge_order = calculate_evaluation_orders(self.adjacency_list, len(node_list))
 
+        # make ops and silents into TextFields
+        self.operations = TextField(self.operations,
+                                    token_indexers={"tokens": SingleIdTokenIndexer(namespace=OP_NAMESPACE)})
+        self.silent = TextField(self.silent,
+                                token_indexers={"tokens": SingleIdTokenIndexer(namespace=SILENT_NAMESPACE)})
+
+        self.available_stack_nodes = available_stack_nodes
+
     def __repr__(self):
         s = "TreeField:\n"
+        s += f"\toperation_or_word_or_silent: {self.operation_or_word_or_silent}\n"
         s += f"\tnode_list: {self.node_list}\n"
         s += f"\tadjacency_list: {self.adjacency_list}\n"
         s += f"\tword_ids: {self.word_ids}\n"
@@ -92,88 +105,190 @@ class TreeField(Field):
         s += f"\tsilent: {self.silent}\n"
         s += f"\tnode_order: {self.node_order}\n"
         s += f"\tedge_order: {self.edge_order}\n"
+        s += f"\tavailable_stack_nodes: {self.available_stack_nodes}\n"
         return s
 
     def count_vocab_items(self, counter: Dict[str, Dict[str, int]]):
         """
         one of the required methods for a Field
         @param counter:
-        @return:
         """
-        pass
-        # count_vocab_items_in_tree(self.tree, counter)
-
-    def apply_to_each_node_in_tree(self, function, tree=None):
-        """
-        Call with tree=None, and it will automatically use self.tree and call itself recursively on the children
-        all the way down.
-        :param tree:
-        :param function:
-        :return:
-        """
-        if tree is None:
-            tree = self.tree
-        function(tree)
-        for child in tree['children']:
-            self.apply_to_each_node_in_tree(function, child)
+        self.operations.count_vocab_items(counter)
+        self.silent.count_vocab_items(counter)
 
     def index(self, vocab: Vocabulary):
         """
         required for Field
         Turns words into indices
         @param vocab:
-        @return:
         """
-        pass
-        # print("INDEX")
-        # index_tree(self.tree, vocab)
-        # self.flat_tree = flatten(self.tree)
-        # # print(self.flat_tree)
-        # self.selection_sequence = []
-        # for i in range(len(self.am_sentence)):
-        #     if i in self.flat_tree['positions_in_sentence']:
-        #         node_positions = [pos for j, pos in enumerate(self.flat_tree['positions_in_sentence'])
-        #                           if self.flat_tree['is_nodes'][j]]
-        #         self.selection_sequence.append(node_positions.index(i))
-        #     else:
-        #         self.selection_sequence.append(-1)
-        # # print("LENGTHS")
-        # # print(len(self.am_sentence))
-        # # print(len(self.selection_sequence))
-        #
-        # self.make_next_selection_sequence()
+        self.operations.index(vocab)
+        self.silent.index(vocab)
+        # words are already numbers
 
     def get_padding_lengths(self) -> Dict[str, int]:
         """
-        Required for Field
-        @return:
+        Required for Field.
+        We're concatenating the trees so we don't need actual padding for them.
+        But this might get used for grouping things of similar size together, so we return the tree size.
+        @return: dict: str to int
         """
-        pass
-        # max_node_sequence_length = get_max_node_sequence_length(self.tree, 'label')
-        # max_aligned_text_length = get_max_node_sequence_length(self.tree, 'aligned_text')
-        # return {'node_sequence_length': max_node_sequence_length, 'aligned_text': max_aligned_text_length,
-        #         'depth': get_depth(self.tree)}
+        return {"number_of_nodes": len(self.node_list), "number_of_arguments": len(self.available_stack_nodes)}
 
-    def as_tensor(self, padding_lengths: Dict[str, int]):
+    def as_tensor(self, padding_lengths: Dict[str, int]) -> dict[str, torch.Tensor]:
         """
         Required for field.
         Turns tree (as represented by vocab indices) into tensors, padding if nec
         @param padding_lengths:
         @return:
         """
-        pass
-        # return self.convert_flat_tree_to_tensors(padding_lengths['node_sequence_length'],
-        #                                         padding_lengths['aligned_text'])
+        ret = {}
+        ret["word_ids"] = torch.tensor(self.word_ids, dtype=torch.long)
+
+        # extract the indices of the operations, as indexed by TextField
+        # and turn them into a tensor
+        ret["operations"] = torch.tensor(self.operations._indexed_tokens["tokens"]["tokens"], dtype=torch.long)
+        ret["silent"] = torch.tensor(self.silent._indexed_tokens["tokens"]["tokens"], dtype=torch.long)
+
+        # these are all already numbers
+        ret["operation_or_word_or_silent"] = torch.tensor(self.operation_or_word_or_silent, dtype=torch.long)
+        ret["adjacency_list"] = torch.tensor(self.adjacency_list, dtype=torch.long)
+        ret["node_order"] = torch.tensor(self.node_order, dtype=torch.long)
+        ret["edge_order"] = torch.tensor(self.edge_order, dtype=torch.long)
+
+        # it may be important to make this a list of tensors here, to have it moved to the correct device etc.
+        # (not quite sure if allennlp does this before or after batching)
+        # iirc, allennlp just iterates over lists (of lists of ...) of tensors automatically
+        # we can still do the offsetting and the padding later
+        # I think every entry in ret should be a tensor, or a list of tensors etc.
+        ret["available_stack_nodes"] = [torch.tensor(v, dtype=torch.long) for v in self.available_stack_nodes]
+
+        return ret
 
     def batch_tensors(self, tensor_list: List):  # type: ignore
         """
-        Required for field. Need to update.
+        Required for field.
+        given a list of TreeFields as tensors (output of TreeField.as_tensor),
+        batch the trees.
         @param tensor_list:
         @return:
         """
-        print("BATCH_TENSORS")
+        batched_node_order = torch.cat([sentence["node_order"] for sentence in tensor_list])
+        batched_edge_order = torch.cat([sentence["edge_order"] for sentence in tensor_list])
+        batched_adjacency_list = []  # will offset by previous tree sizes
+        batched_available_stack_nodes = []  # will offset "
+        offset = 0
+        avail_nodes_padding_value = -1
+        for sentence in tensor_list:
+            batched_adjacency_list.append(sentence["adjacency_list"] + offset)  # pointwise adding offset
+
+            batched_available_stack_nodes_here = self.batch_and_offset_available_stack_nodes_for_sentence(
+                avail_nodes_padding_value, offset, sentence)
+            batched_available_stack_nodes.append(batched_available_stack_nodes_here)
+
+            offset += sentence["operation_or_word_or_silent"].shape[0]  # number of nodes in the graph
+
+        batched_available_stack_nodes = self.pad_and_stack_available_stack_nodes_on_batch_level(avail_nodes_padding_value,
+                                                                                                batched_available_stack_nodes)
+        batched_adjacency_list = torch.cat(batched_adjacency_list)
+        batched_operations = torch.cat([sentence["operations"] for sentence in tensor_list])
+        batched_silent = torch.cat([sentence["silent"] for sentence in tensor_list])
+
+        # the word_ids are used eventually for look-up in a tensor of shape
+        #  batch_size x sentence_length x hidden_dim.
+        # So we want to make a list of tuples, where the first item in the tuple tells us the position in the batch
+        #  (i.e. the sentence ID in the batch; named i below)
+        # and the second item in the tuple tells us the position in the sentence (i.e. the word_id).
+        word_ids_with_sentence_index = []
+        for i, sentence in enumerate(tensor_list):
+            word_ids_here = sentence["word_ids"]
+            # make a tensor with entries all equal to i, with the same shape as word_ids_here
+            sentence_id_tensor = torch.tensor([i] * word_ids_here.shape[0], dtype=torch.long)
+            # stack in dimension 1 because we overall want to make a list of pairs, not a pair of lists.
+            # put the sentence_id_tensor first and word_ids_here second, because in the later tensor where we
+            # will do the lookup, the sentence indices come first and then the word indices
+            # (i.e. the shape is batch_size x sentence_length x hidden_dim)
+            word_ids_with_sentence_index.append(torch.stack([sentence_id_tensor, word_ids_here], dim=1))
+        batched_word_ids_with_sentence_index = torch.cat(word_ids_with_sentence_index, dim=0)
+
+        batched_operation_or_word_or_silent = torch.cat([b["operation_or_word_or_silent"] for b in tensor_list])
+
+        ret = {}
+        ret["word_ids"] = batched_word_ids_with_sentence_index
+        ret["operations"] = batched_operations
+        ret["silent"] = batched_silent
+        ret["operation_or_word_or_silent"] = batched_operation_or_word_or_silent
+        ret["adjacency_list"] = batched_adjacency_list
+        ret["node_order"] = batched_node_order
+        ret["edge_order"] = batched_edge_order
+        ret["available_stack_nodes"] = batched_available_stack_nodes
+
+        return ret
+
+
+        # tree_sizes = [b.structure.is_nodes.shape[0] for b in batch]
+        # batched_edge_labels = torch.cat([b.structure.edge_labels for b in batch])
+        # batched_is_nodes = torch.cat([b.structure.is_nodes for b in batch])
+        # batched_reverse_node_order = torch.cat([b.structure.reverse_node_order for b in batch])
+        # batched_edge_order = torch.cat([b.structure.edge_order for b in batch])
+        # batched_reverse_edge_order = torch.cat([b.structure.reverse_edge_order for b in batch])
+        # batched_adjacency_list = []
+        # batched_reverse_adjacency_list = []
+        # offset = 0
+        # for n, sentence in zip(tree_sizes, batch):
+        #     batched_adjacency_list.append(sentence.structure.adjacency_list + offset)
+        #     batched_reverse_adjacency_list.append(sentence.structure.reverse_adjacency_list + offset)
+        #     offset += n
+        # batched_adjacency_list = torch.cat(batched_adjacency_list)
+        # batched_reverse_adjacency_list = torch.cat(batched_reverse_adjacency_list)
+        # tree_structure = TreeStructure(
+        #     edge_labels=batched_edge_labels,
+        #     is_nodes=batched_is_nodes,
+        #     node_order=batched_node_order,
+        #     reverse_node_order=batched_reverse_node_order,
+        #     edge_order=batched_edge_order,
+        #     reverse_edge_order=batched_reverse_edge_order,
+        #     adjacency_list=batched_adjacency_list,
+        #     reverse_adjacency_list=batched_reverse_adjacency_list,
+        #     tree_sizes=tree_sizes
+        # )
+        #
         # print(tensor_list)
         # return batch_tree_input(tensor_list)
+
+    def pad_and_stack_available_stack_nodes_on_batch_level(self, avail_nodes_padding_value, batched_available_stack_nodes):
+        # each sentence in the batch has a list of SR arguments
+        max_num_sr_arguments = max(t.shape[0] for t in batched_available_stack_nodes)
+        # we actually pad the "available stack nodes" dimension twice
+        # once sentence-internally, in the for loop above (so the max within each sentence is already t.shape[1])
+        # and now again batch-wide, here
+        max_avail_stack_nodes = max(t.shape[1] for t in batched_available_stack_nodes)
+        # Pad
+        # max_avail_stack_nodes - t.shape[1] because this sentence is only t.shape[1] args, so the rest is padding
+        # note that the "pad" argument (a tuple) goes through the dimensions *backwards*, and for each dimension
+        # has two numbers, the first specifying padding on the left (we don't use that, hence the 0), the second padding
+        # on the right.
+        batched_available_stack_nodes = [torch.nn.functional.pad(t, (0, max_avail_stack_nodes - t.shape[1],
+                                                                     0, max_num_sr_arguments - t.shape[0]),
+                                                                 value=avail_nodes_padding_value)
+                                         for t in batched_available_stack_nodes]
+        batched_available_stack_nodes = torch.stack(batched_available_stack_nodes)
+        return batched_available_stack_nodes
+
+    def batch_and_offset_available_stack_nodes_for_sentence(self, avail_nodes_padding_value, offset, sentence):
+        batched_available_stack_nodes_here = []
+        max_choices = max(t.shape[0] for t in sentence["available_stack_nodes"])
+        for t in sentence["available_stack_nodes"]:
+            t_new = self.offset_and_pad_available_nodes_locally(avail_nodes_padding_value, max_choices, offset, t)
+            batched_available_stack_nodes_here.append(t_new)
+        batched_available_stack_nodes_here = torch.stack(batched_available_stack_nodes_here)
+        return batched_available_stack_nodes_here
+
+    def offset_and_pad_available_nodes_locally(self, avail_nodes_padding_value, max_choices, offset, t):
+        t_new = t + offset
+        t_new = torch.nn.functional.pad(t_new, (0, max_choices - t_new.shape[0]),
+                                        value=avail_nodes_padding_value)
+        return t_new
 
     def empty_field(self) -> "Field":
         """
@@ -188,12 +303,10 @@ class TreeField(Field):
          object, but really represent edges)
         :return:
         """
-        len_container = [0]
-        self.apply_to_each_node_in_tree(lambda node: inc_value_in_container_if_is_node(node, len_container))
-        return len_container[0]
+        return len(self.node_list)
 
     def human_readable_repr(self) -> Any:
-        return self.node_list
+        return repr(self)
 
     def convert_flat_tree_to_tensors(self, max_node_sequence_length, max_word_length):
         """
@@ -404,8 +517,8 @@ def calculate_evaluation_orders(adjacency_list, tree_size):
     @return node_order, edge_order
     """
 
-    parents = [p for p,_ in adjacency_list]
-    children = [c for _,c in adjacency_list]
+    parents = [p for p, _ in adjacency_list]
+    children = [c for _, c in adjacency_list]
     adjacency_list = numpy.array(adjacency_list)
 
     node_ids = numpy.arange(tree_size, dtype=int)
@@ -443,6 +556,7 @@ def calculate_evaluation_orders(adjacency_list, tree_size):
     edge_order = node_order[parent_nodes]
 
     return node_order, edge_order
+
 
 #
 # def flatten(tree):
@@ -527,7 +641,7 @@ def calculate_evaluation_orders(adjacency_list, tree_size):
 #         tree_sizes=tree_sizes
 #     )
 #     return tree_structure
-#
+
 #
 # node_length_to_examples = dict()
 # aligned_text_length_to_examples = dict()
@@ -561,3 +675,6 @@ def calculate_evaluation_orders(adjacency_list, tree_size):
 #         for example in examples:
 #             print(example)
 #
+WORD_NAMESPACE = "tokens"
+OP_NAMESPACE = "operations"
+SILENT_NAMESPACE = "silent"

@@ -26,24 +26,32 @@ logger.setLevel(logging.DEBUG)
 OP_CODE = 0
 WORD_CODE = 1
 SILENT_CODE = 2
+
+# not pretty but does the job: distinguishing between OP and ARG and SHIFT_ARG
+# in gold_is_operation_or_argument_or_shift_argument
+OP_CODE_OPARGSHIFT = 0
+ARG_CODE_OPARGSHIFT = 1
+SHIFT_ARG_CODE_OPARGSHIFT = 2
+
+
 SHIFT = "Shift"
 
 
-def get_ops_and_parse_items(term: SynchronousTerm, op_state_copy_list):
-    """
-    Given a synchronous term with an interval pair algebra interpretation,
-    get a list of triple: (minimalist op, children as parse items, list of how many copies we need of each child)
-    @param term: SynchronousTerm.
-    @param op_state_copy_list: list being updated.
-    @return: list of pairs of (SynchronousMinimalistFunction,
-                                    list of children)
-    """
-    if not term.is_leaf():
-        op = term.parent
-        op_state_copy_list.append((op, term.children))
-        for child in term.children:
-            get_ops_and_parse_items(child, op_state_copy_list)
-    return term, op_state_copy_list
+# def get_ops_and_parse_items(term: SynchronousTerm, op_state_copy_list):
+#     """
+#     Given a synchronous term with an interval pair algebra interpretation,
+#     get a list of triple: (minimalist op, children as parse items, list of how many copies we need of each child)
+#     @param term: SynchronousTerm.
+#     @param op_state_copy_list: list being updated.
+#     @return: list of pairs of (SynchronousMinimalistFunction,
+#                                     list of children)
+#     """
+#     if not term.is_leaf():
+#         op = term.parent
+#         op_state_copy_list.append((op, term.children))
+#         for child in term.children:
+#             get_ops_and_parse_items(child, op_state_copy_list)
+#     return term, op_state_copy_list
 
 
 def find_child_in_stack(child, stack):
@@ -140,13 +148,14 @@ def find_child_in_stack(child, stack):
 #             rename_leaves_to_indices(child, interval_algebra)
 
 
-def write_actions_to_file(path_to_file, sentence, actions, node_list, op_or_word_or_silent, adjacency_list):
+def write_actions_to_file(path_to_file, sentence, actions, node_list,
+                          op_or_word_or_silent, adjacency_list, tree_indices, stack_items):
     """
     Appends one sentence and its action list to the file.
     printed format:
             sentence
             \t actions as operations and stack indices
-            \t node_list: list of node indices in the tree
+            \t node_list: list of node labels or word indices in the tree
             \t op_or_word_or_silent: list of 0,1,2 corresponding to node_list,
                                         telling us whether each is an operation, a word, or silent
             \t adjacency_list: parent child parent child... where the parent and child are list indices in the node list
@@ -164,8 +173,10 @@ def write_actions_to_file(path_to_file, sentence, actions, node_list, op_or_word
     """
     with open(path_to_file, "a") as f:
         s = f"{sentence}"
-        for param in [actions, node_list, op_or_word_or_silent, adjacency_list]:
+        for param in [actions, node_list, op_or_word_or_silent, adjacency_list, tree_indices]:
             s += f"\t{' '.join(str(x) for x in param)}"
+        s += "\t"
+        s += ", ".join([' '.join([str(n) for n in nodes]) for  nodes in stack_items])
         s += "\n"
         f.write(s)
 
@@ -196,10 +207,11 @@ def term2file(term: SynchronousTerm,
     steps_by_tree_index = stack_info_by_tree_index(steps)
     initial_stack = [Expression(interval_algebra.make_leaf(i), DSMCMovers()) for i in range(len(sent_interval))]
 
-    actions = stack_info2actions(initial_stack, steps, silent_vocabulary)
+    actions, tree_indices, stack_items = stack_info2actions(initial_stack, steps, silent_vocabulary)
     node_list = sorted(steps_by_tree_index.keys())
     op_or_word_or_silent = []
     node_label_list = []
+    node_index_list = []
     for node in node_list:
         info = steps_by_tree_index[node]
         category = info.is_op_or_index_or_name
@@ -210,6 +222,7 @@ def term2file(term: SynchronousTerm,
             node_label_list.append(info.node_number)  # this is the string index
         else:
             raise ValueError('Unexpected category {}'.format(category))
+        node_index_list.append(info.node_number)
 
     adjacency_list = []
     for address in steps:
@@ -229,7 +242,8 @@ def term2file(term: SynchronousTerm,
         except KeyError:
             continue
 
-    write_actions_to_file(path_to_file, sent, actions, node_label_list, op_or_word_or_silent, adjacency_list)
+    write_actions_to_file(path_to_file, sent, actions, node_label_list,
+                          op_or_word_or_silent, adjacency_list, node_index_list, stack_items)
 
 
 def add_conj_features(sentence: str, stack: list[Expression], conjunction_list: list[str]):
@@ -398,15 +412,19 @@ def stack_info2actions(stack, stack_info: dict[str: StackInfo], silents) -> list
     actions = []
 
     # corresponding node numbers in the term for each operation or leaf. -1 for Shift, word index for arg of Shift.
-    # tree_indices = []
+    tree_indices = []
+    stack_items = []
     # list of (parent node number, child node number)
     # adjacency_list = []
     # list of operation node numbers in stack order
     # operations = []
     # list of argument node numbers in stack order
     # arguments = []
-
+    stack = list(zip(stack, range(len(stack))))
     logger.debug(f"Initial Stack: {stack}")
+    # stack is pairs (term, root node number)
+    # word indices are their node numbers, so we initialise:
+    stack_items.append(list(range(len(stack))))
 
     def take_step(current_stack_info: StackInfo):
         """
@@ -426,7 +444,7 @@ def stack_info2actions(stack, stack_info: dict[str: StackInfo], silents) -> list
         for child_address, child in zip(current_stack_info.childrens_addresses,
                                         current_stack_info.childrens_expressions):
             tree_index = stack_info[child_address].node_number
-            ind_or_silent = find_child_in_stack(child, stack)  # stack index or silent head name
+            ind_or_silent = find_child_in_stack(child, [e for e, _ in stack])  # stack index or silent head name
             child_in_stack = isinstance(ind_or_silent, int)
             if child_in_stack:
                 # normal case
@@ -438,12 +456,15 @@ def stack_info2actions(stack, stack_info: dict[str: StackInfo], silents) -> list
             elif child.is_lexical:
                 logger.debug(f"{child} not on stack or silents. Shifting {tree_index} from buffer.")
                 # "copy" from the sentence (but actually, we already have it, so just put it on the stack
-                stack.append(child)
+                stack.append((child, tree_index))
                 # record this as a Shift operation
                 actions.append(SHIFT)
-                # tree_indices.append(shift_tree_index)
+                tree_indices.append(shift_tree_index)
                 actions.append(tree_index)  # sentence index is the same as sentence index, and we already calculated it
-                # tree_indices.append(tree_index)
+                tree_indices.append(tree_index)
+                stack_items.append([n for _, n in stack])
+                logger.debug(f"stack: {stack}")
+                logger.debug(f"stack items: {stack_items}")
 
                 # now use it
                 stack_silent_or_buffer_index = len(stack) - 1  # stack index of newly added item
@@ -455,12 +476,12 @@ def stack_info2actions(stack, stack_info: dict[str: StackInfo], silents) -> list
         # update actions
         # parent
         actions.append(current_stack_info.op)
-        # tree_indices.append(current_stack_info.node_number)
+        tree_indices.append(current_stack_info.node_number)
         # operations.append(current_stack_info.node_number)
         # children
         for (tree_index, child_index) in child_indices:
             actions.append(child_index)
-            # tree_indices.append(tree_index)
+            tree_indices.append(tree_index)
             # adjacency_list.append((current_stack_info.node_number, tree_index))
             # arguments.append(tree_index)
 
@@ -470,16 +491,18 @@ def stack_info2actions(stack, stack_info: dict[str: StackInfo], silents) -> list
         for i in sorted(indices_to_remove, reverse=True):
             stack.pop(i)
         # append new item to the end
-        stack.append(current_stack_info.expression)
+        stack.append((current_stack_info.expression, current_stack_info.node_number))
+        stack_items.append([n for _, n in stack])
 
         logger.debug(f"{current_stack_info.op}({[stack_index for _, stack_index in child_indices]})")
         logger.debug(f"stack: {stack}")
+        logger.debug(f"stack items: {stack_items}")
 
     addresses_in_order = reversed(stack_info.keys())
     for address in addresses_in_order:
         take_step(stack_info[address])
 
-    return actions   # tree_indices, adjacency_list, operations, arguments
+    return actions, tree_indices, stack_items  #, adjacency_list, operations, arguments
 
 
 def stack_info_by_tree_index(stack_info: dict[str: StackInfo]):

@@ -4,7 +4,10 @@ From https://github.com/unbounce/pytorch-tree-lstm -- JG
 PyTorch Child-Sum Tree LSTM model
 
 See Tai et al. 2015 https://arxiv.org/abs/1503.00075 for model description.
+
+DONE!
 """
+from typing import Iterable
 
 import torch
 from torch.nn import Dropout
@@ -115,6 +118,9 @@ class TreeLSTM(torch.nn.Module):
             child_counts = tuple(child_counts)
 
             child_h_grouped_by_parent = torch.split(child_h, child_counts)
+            # TODO: we are just summing the children here, which loses order information (order actually matters
+            #  in MG trees). Could improve this later. Then we also need to make sure that the order at this point
+            #  in the code is actually the correct order.
             parent_list = [item.sum(0) for item in child_h_grouped_by_parent]
 
             h_sum = torch.stack(parent_list)

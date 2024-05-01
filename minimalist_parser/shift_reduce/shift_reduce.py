@@ -1,8 +1,233 @@
-"""
-Basic structure of a minimalist minimalist_parser mg, assuming we'll do Merge_3 with attention, not reordering
-"""
+import logging
 
-from minimalist_parser.algebras.possibly_obsolete_algebras.generalised_minimalist_algebra import *
+from data_reader import MOVE, MERGE, is_merge, is_move, is_shift
+from minimalist_parser.algebras.algebra import AlgebraTerm
+from minimalist_parser.algebras.algebra_objects.intervals import IntervalError, PairItem
+from minimalist_parser.algebras.hm_interval_pair_algebra import HMIntervalPairsAlgebra
+from minimalist_parser.algebras.string_algebra import BareTreeStringAlgebra
+from minimalist_parser.convert_mgbank.slots import A, Abar, R, Self
+from minimalist_parser.convert_mgbank.term2actions import SHIFT, ARG_CODE_OPARGSHIFT, SHIFT_ARG_CODE_OPARGSHIFT, OP_CODE_OPARGSHIFT
+from minimalist_parser.minimalism.mg_errors import SMCViolation, MGError
+from minimalist_parser.minimalism.minimalist_algebra import Expression
+from minimalist_parser.minimalism.minimalist_algebra_synchronous import MinimalistAlgebraSynchronous, SynchronousTerm, \
+    MinimalistFunctionSynchronous, InnerAlgebraInstructions
+from minimalist_parser.minimalism.movers import DSMCMovers, Movers
+from minimalist_parser.minimalism.prepare_packages.interval_prepare_package import IntervalPairPrepare
+from minimalist_parser.minimalism.prepare_packages.prepare_packages_bare_trees import PreparePackagesBareTrees
+
+
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+# logger.setLevel(logging.INFO)
+
+# distinguish whether we can choose a silent head
+SILENT = "silent"
+STACK_ITEM = "stack_item"
+
+# string algebra over bare trees as algebra terms
+string_alg = BareTreeStringAlgebra(name="string_algebra")
+string_alg.add_constant_maker()
+
+# interval algebra for parse items
+interval_algebra = HMIntervalPairsAlgebra()
+interval_prepare = IntervalPairPrepare()
+interval_algebra.add_constant_maker()
+
+# Synchronous algebra over both
+mg = MinimalistAlgebraSynchronous([string_alg, interval_algebra],
+                                  prepare_packages=[PreparePackagesBareTrees(name="for strings",
+                                                                             inner_algebra=string_alg),
+                                                    interval_prepare], mover_type=DSMCMovers)
+
+
+
+def legal_next_sr_item(sr_sequence: list):
+    """
+    Given a shift-reduce sequence, so far, what are we allowed to do?
+    @param sr_sequence: list of strings, operation names or stack indices or buffer indices
+    @return: 0, 1, or 2, according to whether we need an operation, a stack/silent argument,
+                or something from the buffer (for SHIFT)
+    """
+    if len(sr_sequence) == 0:
+        return OP_CODE_OPARGSHIFT
+    elif is_shift(sr_sequence[-1]):
+        return SHIFT_ARG_CODE_OPARGSHIFT
+    elif len(sr_sequence) >= 2 and is_move(sr_sequence[-2]) or is_shift(sr_sequence[-2]):
+        # unary shift and move mean we need an operation after 1 arg
+        return OP_CODE_OPARGSHIFT
+    elif len(sr_sequence) >= 3 and is_merge(sr_sequence[-3]):
+        # binary merge means we need an operation after 2 args
+        return OP_CODE_OPARGSHIFT
+    else:
+        return ARG_CODE_OPARGSHIFT
+
+
+def legal_next_sr_item_constrained(sr_sequence: list):
+    """
+    Given a shift-reduce sequence, so far, what are we allowed to do?
+    @param sr_sequence: list of strings, operation names or stack indices or buffer indices
+    @return: list; first element is 0, 1, or 2, according to whether we need an operation, a stack/silent argument,
+                or something from the buffer (for SHIFT).
+                following elements are strings saying which operations or arguments are actually possible,
+                 given the configuration of the SR sequence.
+                 (Note we're not checking here what operations are legal in the partial minimalist algebra)
+    """
+    if len(sr_sequence) == 0:
+        return [OP_CODE_OPARGSHIFT, MERGE, SHIFT]
+    elif is_shift(sr_sequence[-1]):
+        return [SHIFT_ARG_CODE_OPARGSHIFT]
+    elif len(sr_sequence) >= 2 and is_move(sr_sequence[-2]) or is_shift(sr_sequence[-2]):
+        # unary shift and move mean we need an operation after 1 arg
+        return [OP_CODE_OPARGSHIFT, MERGE, MOVE, SHIFT]
+    elif len(sr_sequence) >= 3 and is_merge(sr_sequence[-3]):
+        # binary merge means we need an operation after 2 args
+        return [OP_CODE_OPARGSHIFT, MERGE, MOVE, SHIFT]
+    elif len(sr_sequence) >= 2 and is_move(sr_sequence[-1]):
+        # Move can't be followed by a silent head
+        return [ARG_CODE_OPARGSHIFT, STACK_ITEM]
+    else:
+        # first or second Merge argument
+        return [ARG_CODE_OPARGSHIFT, STACK_ITEM, SILENT]
+
+
+def apply_minimalist_operation(operation_name: str, children: list[SynchronousTerm]):
+    """
+    Use the operation on the children. If
+    @param operation_name: str: merge or move neme to look up in mg.ops
+    @param children: list of SynchronousTerms
+    @return: ParseItem of the new term and its interpretation into the interval algebra, with the string interp as backup
+    """
+    new_term = SynchronousTerm(mg.ops[operation_name], children)
+    pair_item = string = None
+    try:
+        expression = new_term.interp(interval_algebra)
+        try:
+            pair_item = expression.inner_term.evaluate()
+        except IntervalError:
+            pair_item = None
+        try:
+            string = new_term.interp(string_alg)
+        # TODO we might need different errors here, but for now let's print so we can make sure this works when it should
+        except Exception as e:
+            logger.warning(f"Exception raised while trying to apply {operation_name}: {e}")
+            string = None
+    except MGError as e:
+        logger.warning(f"MGError {e} raised applying {operation_name}")
+        expression = None
+
+    return ParseItem(new_term, expression, pair_item, string)
+
+
+
+
+class ParseItem:
+    def __init__(self, term: SynchronousTerm, expression: Expression, pair_item: PairItem, string: str):
+        """
+        Partial results
+        @param pair_item: expression.inner_term.evaluate()
+        @param expression: term.interp(interval_algebra)
+        @param term: SynchronousTerm
+        @param string: term.interp(string_alg).inner_term.evaluate()
+        """
+        self.pair_item = pair_item
+        self.expression = expression
+        self.term = term
+        self.string = string
+
+    def is_valid(self):
+        return self.pair_item is not None
+
+    def is_valid_for_strings(self):
+        return self.string is not None
+
+    def valid_mover_handling(self):
+        return self.expression is not None
+
+    def is_complete(self):
+        if self.is_valid():
+            return self.expression.is_complete()
+        # otherwise just worry about movers
+        if self.valid_mover_handling():
+            return not self.expression.has_movers()
+        else:
+            return False
+
+    def possible_operations(self):
+        """
+        Finds all possible operations that can be performed, without knowing what the other argument is, in the case of Merge.
+        Move1 includes the outcome as a ParseItem.
+
+        @return: dict from
+        merge1 to MinimalistFunctionSynchronous list,
+        merge2 to MinimalistFunctionSynchronous list,
+        move1 to MinimalistFunctionSynchronous, ParseItem pair list,
+        move2 to MinimalistFunctionSynchronous list
+        """
+        ret = {"merge1": [], "merge2": [], "move1": [], "move2": []}
+
+        ret["merge1"].append(MinimalistFunctionSynchronous(mg, mg.merge1, {string_alg: InnerAlgebraInstructions("concat_left", reverse=True),
+                                                                           interval_algebra: InnerAlgebraInstructions("concat_left"),}))
+        if self.pair_item.can_hm:
+            for prepare in ["suffix", "prepare", "hm_atb", "excorporation"]:
+                ret["merge1"].append(
+                    MinimalistFunctionSynchronous(mg, mg.merge1, {string_alg: InnerAlgebraInstructions(prepare=prepare),
+                                                                  interval_algebra: InnerAlgebraInstructions(
+                                                                      prepare=prepare)}))
+
+        from_slots = self.expression.movers.mover_dict.keys()
+        to_slots = [slot for slot in mg.slots if slot not in from_slots]
+        for to_slot in to_slots:
+            for from_slot in from_slots:
+                ret["move2"].append(MinimalistFunctionSynchronous(mg, mg.move2, from_slot=from_slot, to_slot=to_slot))
+            ret["merge2"].append(MinimalistFunctionSynchronous(mg, mg.merge2, to_slot=to_slot))
+            ret["merge2"].append(MinimalistFunctionSynchronous(mg, mg.merge2, to_slot=to_slot, adjoin=True))
+
+            if self.pair_item.can_hm:
+                for prepare in ["suffix", "prepare", "hm_atb", "excorporation"]:
+                    ret["merge2"].append(MinimalistFunctionSynchronous(mg, mg.merge2, {string_alg: InnerAlgebraInstructions(prepare=prepare),
+                                                                                       interval_algebra: InnerAlgebraInstructions(prepare=prepare)}, to_slot=to_slot))
+
+
+        for from_slot in from_slots:
+            try:
+                op = MinimalistFunctionSynchronous(mg, mg.move1, from_slot=from_slot,
+                                                   inner_ops={string_alg: InnerAlgebraInstructions("concat_left", reverse=True),
+                                                              interval_algebra: InnerAlgebraInstructions("concat_left")
+                                                              })
+                t = SynchronousTerm(op, [self.term])
+                e = t.interp(interval_algebra)
+                i = e.inner_term.evaluate()
+                s = t.interp(string_alg).inner_term.evaluate()
+                ret["move1"].append((op, ParseItem(t, e, i, s)))
+            except:
+                pass
+
+            try:
+                op = MinimalistFunctionSynchronous(mg, mg.move1, from_slot=from_slot,
+                                                   inner_ops={string_alg: InnerAlgebraInstructions("concat_right"),
+                                                              interval_algebra: InnerAlgebraInstructions("concat_right")
+                                                              })
+                t = SynchronousTerm(op, [self.term])
+                e = t.interp(interval_algebra)
+                i = e.inner_term.evaluate()
+                s = t.interp(string_alg).inner_term.evaluate()
+                ret["move1"].append((op, ParseItem(t, e, i, s)))
+            except:
+                pass
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 # class Feature:
 #     """
@@ -44,137 +269,137 @@ from minimalist_parser.algebras.possibly_obsolete_algebras.generalised_minimalis
 # ** interval algebra for parsing**
 
 
-class Interval:
-    def __init__(self, start=0, end=0):
-        """
-        Interval (start, end)
-        @param start: int
-        @param end: int
-        """
-        if start <= end:
-            self.start = start
-            self.end = end
-        else:
-            print("Interval warning: interval ({}, {}) undefined. creating ({}, {}) instead.".format(
-                start, end, end, start))
-            self.start = end
-            self.end = start
-
-    def __len__(self):
-        return self.end - self.start
-
-    def __repr__(self):
-        return "({},{})".format(self.start, self.end)
-
-    def __lt__(self, other):
-        return self.end <= other.start
-
-    def __gt__(self, other):
-        return self.start >= other.end
-
-    def __add__(self, other):
-        if self.start == other.end:
-            return Interval(other.start, self.end)
-        elif self.end == other.start:
-            return Interval(self.start, other.end)
-        else:
-            return None
-
-    def add_incl_empty(self, other):
-        if other is None:
-            return Interval(self.start, self.end)
-        else:
-            return self.__add__(other)
-
-
-    def distance(self, other):
-        if self.__lt__(other):
-            return other.start - self.end
-        elif self.__gt__(other):
-            return self.start - other.end
-        else:
-            print("Interval.distance warning: intervals {} and {} overlap".format(self, other))
-            return 0
-
-
-class ParseItem:
-    def __init__(self, string: str, interval: Interval):
-        """
-        for neural parsing, we keep the word for the NN and the interval to tell us what's legal
-        @param string: str of constituent
-        @param interval: Interval : span of constituent, counting between the words eg 0 the 1 cat 2 slept 3
-        """
-        self.string = string
-        self.interval = interval
-
-    def __repr__(self):
-        inter = self.interval
-        if self.interval is None:
-            inter = "(-,-)"
-        return "{}:{}".format(self.string, inter)
-
-    def combine(self, neighbour):
-        """
-        combines in whichever order works accourding to the intervals; otherwise returns None
-        @param neighbour: ParseItem
-        @return: ParseItem with strings concatenated and intervals concatenated
-        """
-
-        if neighbour.interval is None:  # ignore stuff with no interval
-            return self
-        elif self.interval is None:
-            return neighbour
-        elif neighbour.interval.end == self.interval.start:
-            return ParseItem(" ".join([neighbour.string, self.string]),
-                             Interval(neighbour.interval.start, self.interval.end))
-        elif neighbour.interval.start == self.interval.end:
-            return ParseItem(" ".join([self.string, neighbour.string]),
-                             Interval(self.interval.start, neighbour.interval.end))
-        else:
-            return None
-
-    def adjacent(self, other):
-        """
-        true if other is adjacent to self, or if either interval is None
-        @param other:
-        @return:
-        """
-
-        return other.interval is None or self.interval is None or \
-               other.interval.end == self.interval.start or other.interval.start == self.interval.end
-
-
-def combine_parse_items(ps):
-    """
-    function for the algebra; takes list of 2 ParseItems and combines them
-    @param ps: ParseItem list of len 2
-    @return: ParseItem
-    """
-    assert len(ps) == 2
-    return ps[0].combine(ps[1])
-
-
-def silent():
-    """
-    No interval means we're adjacent to everything
-    @return:
-    """
-    return ParseItem("", None)
-
-
-add_silent = AlgebraOp("null", lambda l: l[0])
-
-
-# ** ALGEBRA **
-parse_item_algebra = Algebra(ops={"combine": AlgebraOp("combine", combine_parse_items),
-                                  "null_right": add_silent,
-                                  "null_left": add_silent,
-                                  "epsilon": AlgebraOp("epsilon", silent())
-                                  }, name="Parse Item Algebra")
-parse_item_algebra.add_constant_maker()
-
-
-
+# class Interval:
+#     def __init__(self, start=0, end=0):
+#         """
+#         Interval (start, end)
+#         @param start: int
+#         @param end: int
+#         """
+#         if start <= end:
+#             self.start = start
+#             self.end = end
+#         else:
+#             print("Interval warning: interval ({}, {}) undefined. creating ({}, {}) instead.".format(
+#                 start, end, end, start))
+#             self.start = end
+#             self.end = start
+#
+#     def __len__(self):
+#         return self.end - self.start
+#
+#     def __repr__(self):
+#         return "({},{})".format(self.start, self.end)
+#
+#     def __lt__(self, other):
+#         return self.end <= other.start
+#
+#     def __gt__(self, other):
+#         return self.start >= other.end
+#
+#     def __add__(self, other):
+#         if self.start == other.end:
+#             return Interval(other.start, self.end)
+#         elif self.end == other.start:
+#             return Interval(self.start, other.end)
+#         else:
+#             return None
+#
+#     def add_incl_empty(self, other):
+#         if other is None:
+#             return Interval(self.start, self.end)
+#         else:
+#             return self.__add__(other)
+#
+#
+#     def distance(self, other):
+#         if self.__lt__(other):
+#             return other.start - self.end
+#         elif self.__gt__(other):
+#             return self.start - other.end
+#         else:
+#             print("Interval.distance warning: intervals {} and {} overlap".format(self, other))
+#             return 0
+#
+#
+# class ParseItem:
+#     def __init__(self, string: str, interval: Interval):
+#         """
+#         for neural parsing, we keep the word for the NN and the interval to tell us what's legal
+#         @param string: str of constituent
+#         @param interval: Interval : span of constituent, counting between the words eg 0 the 1 cat 2 slept 3
+#         """
+#         self.string = string
+#         self.interval = interval
+#
+#     def __repr__(self):
+#         inter = self.interval
+#         if self.interval is None:
+#             inter = "(-,-)"
+#         return "{}:{}".format(self.string, inter)
+#
+#     def combine(self, neighbour):
+#         """
+#         combines in whichever order works accourding to the intervals; otherwise returns None
+#         @param neighbour: ParseItem
+#         @return: ParseItem with strings concatenated and intervals concatenated
+#         """
+#
+#         if neighbour.interval is None:  # ignore stuff with no interval
+#             return self
+#         elif self.interval is None:
+#             return neighbour
+#         elif neighbour.interval.end == self.interval.start:
+#             return ParseItem(" ".join([neighbour.string, self.string]),
+#                              Interval(neighbour.interval.start, self.interval.end))
+#         elif neighbour.interval.start == self.interval.end:
+#             return ParseItem(" ".join([self.string, neighbour.string]),
+#                              Interval(self.interval.start, neighbour.interval.end))
+#         else:
+#             return None
+#
+#     def adjacent(self, other):
+#         """
+#         true if other is adjacent to self, or if either interval is None
+#         @param other:
+#         @return:
+#         """
+#
+#         return other.interval is None or self.interval is None or \
+#                other.interval.end == self.interval.start or other.interval.start == self.interval.end
+#
+#
+# def combine_parse_items(ps):
+#     """
+#     function for the algebra; takes list of 2 ParseItems and combines them
+#     @param ps: ParseItem list of len 2
+#     @return: ParseItem
+#     """
+#     assert len(ps) == 2
+#     return ps[0].combine(ps[1])
+#
+#
+# def silent():
+#     """
+#     No interval means we're adjacent to everything
+#     @return:
+#     """
+#     return ParseItem("", None)
+#
+#
+# add_silent = AlgebraOp("null", lambda l: l[0])
+#
+#
+# # ** ALGEBRA **
+# parse_item_algebra = Algebra(ops={"combine": AlgebraOp("combine", combine_parse_items),
+#                                   "null_right": add_silent,
+#                                   "null_left": add_silent,
+#                                   "epsilon": AlgebraOp("epsilon", silent())
+#                                   }, name="Parse Item Algebra")
+# parse_item_algebra.add_constant_maker()
+#
+#
+#
 
 
 class Action:
