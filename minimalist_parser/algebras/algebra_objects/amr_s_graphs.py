@@ -2,8 +2,7 @@
 An attempt to fix coordination
 """
 from minimalist_parser.algebras.algebra import AlgebraError
-from minimalist_parser.algebras.algebra_objects.graphs import SGraph, apply, modify
-
+from minimalist_parser.algebras.algebra_objects.graphs import SGraph
 import logging
 VERBOSE = True
 logger = logging.getLogger(__name__)
